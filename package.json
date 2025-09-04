@@ -1,0 +1,27 @@
+{
+    "name": "discord-paypal-bot",
+    "version": "1.0.0",
+    "description": "Discord bot to track PayPal balance for Minecraft server funding",
+    "main": "src/index.js",
+    "scripts": {
+        "start": "node src/index.js",
+        "dev": "node --watch src/index.js"
+    },
+    "dependencies": {
+        "discord.js": "^14.14.1",
+        "dotenv": "^16.4.5",
+        "node-cron": "^3.0.3",
+        "node-fetch": "^3.3.2"
+    },
+    "engines": {
+        "node": ">=18.0.0"
+    },
+    "keywords": [
+        "discord",
+        "bot",
+        "paypal",
+        "minecraft"
+    ],
+    "author": "Your Name",
+    "license": "MIT"
+}
