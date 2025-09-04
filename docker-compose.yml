@@ -1,0 +1,242 @@
+services:
+  # PostgreSQL Database
+  db:
+    image: postgres:15-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: scpi_simulator
+      POSTGRES_USER: scpi_user
+      POSTGRES_PASSWORD: scpi_password
+      POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --lc-collate=C --lc-ctype=C"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U scpi_user -d scpi_simulator"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - alderan-network
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --appendonly yes --requirepass redis_password
+    environment:
+      REDIS_PASSWORD: redis_password
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - alderan-network
+
+  # Backend API
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: production
+    restart: unless-stopped
+    environment:
+      # Application settings
+      PROJECT_NAME: "SCPI Simulator API"
+      VERSION: "1.0.0"
+      API_V1_STR: "/api/v1"
+      ENVIRONMENT: "production"
+      
+      # Server settings
+      HOST: "0.0.0.0"
+      PORT: 8000
+      RELOAD: false
+      
+      # Database settings
+      DATABASE_URL: "postgresql://scpi_user:scpi_password@db:5432/scpi_simulator"
+      DATABASE_HOST: "db"
+      DATABASE_PORT: 5432
+      DATABASE_NAME: "scpi_simulator"
+      DATABASE_USER: "scpi_user"
+      DATABASE_PASSWORD: "scpi_password"
+      
+      # Redis settings
+      REDIS_URL: "redis://:redis_password@redis:6379/0"
+      REDIS_HOST: "redis"
+      REDIS_PORT: 6379
+      REDIS_DB: 0
+      
+      # Security settings
+      SECRET_KEY: "production-secret-key-change-this-in-real-deployment"
+      ACCESS_TOKEN_EXPIRE_MINUTES: 30
+      ALGORITHM: "HS256"
+      
+      # CORS settings
+      BACKEND_CORS_ORIGINS: "http://localhost:3000,http://localhost:5173,http://frontend:80,https://alderan.fr"
+      
+      # Logging
+      LOG_LEVEL: "INFO"
+      LOG_FORMAT: "json"
+      
+      # Rate limiting
+      RATE_LIMIT_ENABLED: true
+      RATE_LIMIT_PER_MINUTE: 60
+    volumes:
+      - backend_uploads:/app/uploads
+      - backend_logs:/app/logs
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - alderan-network
+
+  # Frontend Application
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      target: production
+      args:
+        VITE_API_BASE_URL: "http://localhost:8000/api/v1"
+        VITE_APP_NAME: "Simulateur SCPI Alderan"
+        VITE_APP_VERSION: "1.0.0"
+        VITE_ENVIRONMENT: "production"
+    restart: unless-stopped
+    environment:
+      # API Configuration
+      VITE_API_BASE_URL: "http://localhost:8000/api/v1"
+      
+      # Application Configuration
+      VITE_APP_NAME: "Simulateur SCPI Alderan"
+      VITE_APP_VERSION: "1.0.0"
+      VITE_APP_DESCRIPTION: "Simulateur d'investissement SCPI pour Alderan"
+      
+      # Environment
+      VITE_ENVIRONMENT: "production"
+      
+      # Feature Flags
+      VITE_ENABLE_DEV_TOOLS: "false"
+      VITE_ENABLE_ANALYTICS: "true"
+      VITE_ENABLE_MOCK_API: "false"
+      VITE_ENABLE_ERROR_REPORTING: "true"
+      
+      # API Configuration
+      VITE_API_TIMEOUT: "30000"
+      VITE_API_RETRY_ATTEMPTS: "3"
+      
+      # Cache Configuration
+      VITE_CACHE_DURATION: "300000"
+      
+      # UI Configuration
+      VITE_DEFAULT_THEME: "light"
+      VITE_ENABLE_DARK_MODE: "true"
+      VITE_ENABLE_ANIMATIONS: "true"
+      
+      # Security
+      VITE_ENABLE_CSP: "true"
+      VITE_ALLOWED_HOSTS: "localhost,127.0.0.1,alderan.fr"
+      
+      # Iframe Integration
+      VITE_IFRAME_ALLOWED_ORIGINS: "https://alderan.fr,https://www.alderan.fr"
+      
+      # Localization
+      VITE_DEFAULT_LOCALE: "fr"
+      VITE_SUPPORTED_LOCALES: "fr,en"
+      
+      # Contact Information
+      VITE_CONTACT_EMAIL: "contact@alderan.fr"
+      VITE_SUPPORT_PHONE: "+33123456789"
+      
+      # Legal
+      VITE_PRIVACY_POLICY_URL: "https://alderan.fr/privacy"
+      VITE_TERMS_OF_SERVICE_URL: "https://alderan.fr/terms"
+    ports:
+      - "3000:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - alderan-network
+
+  # Nginx Reverse Proxy (optional, for production)
+  nginx:
+    image: nginx:alpine
+    restart: unless-stopped
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - nginx_logs:/var/log/nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      - frontend
+      - backend
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - alderan-network
+    profiles:
+      - production
+
+  # Development Database (for testing)
+  test-db:
+    image: postgres:15-alpine
+    restart: "no"
+    environment:
+      POSTGRES_DB: test_scpi_simulator
+      POSTGRES_USER: test_user
+      POSTGRES_PASSWORD: test_password
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U test_user -d test_scpi_simulator"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - alderan-network
+    profiles:
+      - testing
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  backend_uploads:
+    driver: local
+  backend_logs:
+    driver: local
+  nginx_logs:
+    driver: local
+
+networks:
+  alderan-network:
+    driver: bridge
